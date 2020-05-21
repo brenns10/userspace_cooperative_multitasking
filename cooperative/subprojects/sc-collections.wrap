@@ -1,0 +1,4 @@
+[wrap-git]
+directory = sc-collections.git
+url = https://git.sr.ht/~brenns10/sc-collections
+revision = master
