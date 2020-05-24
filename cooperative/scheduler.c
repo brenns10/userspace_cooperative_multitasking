@@ -17,7 +17,7 @@ struct task {
 	int id;
 
 	/*
-	 * For tasks in the ST_WAITING state, this is where to longjmp back to
+	 * For tasks in the ST_RUNNING state, this is where to longjmp back to
 	 * in order to resume their execution.
 	 */
 	jmp_buf buf;
@@ -41,7 +41,6 @@ struct task {
 enum {
 	INIT=0,
 	SCHEDULE,
-	START_TASK,
 	EXIT_TASK,
 };
 
@@ -82,13 +81,25 @@ void scheduler_create_task(void (*func)(void *), void *arg)
 	sc_list_insert_end(&priv.task_list, &task->task_list);
 }
 
+void scheduler_exit_current_task(void)
+{
+	struct task *task = priv.current;
+	/* Remove so we don't schedule this again */
+	sc_list_remove(&task->task_list);
+	/* Would love to free the task... but if we do, we won't have a
+	 * stack anymore, which would really put a damper on things.
+	 * Let's defer that until we longjmp back into the old stack */
+	longjmp(priv.buf, EXIT_TASK);
+	/* NO RETURN */
+}
+
 static struct task *scheduler_choose_task(void)
 {
 	struct task *task;
 
 	sc_list_for_each_entry(task, &priv.task_list, task_list, struct task)
 	{
-		if (task->status == ST_CREATED || task->status == ST_WAITING) {
+		if (task->status == ST_RUNNING || task->status == ST_CREATED) {
 			/* We'll pick this one, but first we should move it to
 			 * the back to ensure that we pick a new task next
 			 * time. Note that this is only safe because we're
@@ -114,10 +125,28 @@ static void schedule(void)
 
 	priv.current = next;
 	if (next->status == ST_CREATED) {
+		/*
+		 * This task has not been started yet. Assign a new stack
+		 * pointer, run the task, and exit it at the end.
+		 */
+		register void *top = next->stack_top;
+		asm volatile(
+			"mov %[rs], %%rsp \n"
+			: [ rs ] "+r" (top) ::
+		);
+
+		/*
+		 * Run the task function
+		 */
 		next->status = ST_RUNNING;
-		longjmp(priv.buf, START_TASK);
+		next->func(next->arg);
+
+		/*
+		 * The stack pointer should be back where we set it. Returning would be
+		 * a very, very bad idea. Let's instead exit
+		 */
+		scheduler_exit_current_task();
 	} else {
-		next->status = ST_RUNNING;
 		longjmp(next->buf, 1);
 	}
 	/* NO RETURN */
@@ -128,7 +157,6 @@ void scheduler_relinquish(void)
 	if (setjmp(priv.current->buf)) {
 		return;
 	} else {
-		priv.current->status = ST_WAITING;
 		longjmp(priv.buf, SCHEDULE);
 	}
 }
@@ -141,50 +169,6 @@ static void scheduler_free_current_task(void)
 	free(task);
 }
 
-void scheduler_exit_current_task(void)
-{
-	struct task *task = priv.current;
-	if (task) {
-		/* Remove so we don't schedule this again */
-		sc_list_remove(&task->task_list);
-		/* Would love to free the task... but if we do, we won't have a
-		 * stack anymore, which would really put a damper on things.
-		 * Let's defer that until we longjmp back into the old stack */
-		longjmp(priv.buf, SCHEDULE);
-		/* NO RETURN */
-	}
-	fprintf(stderr, "error: scheduler_exit_current_task() called outside"
-		" a scheduler task\n");
-	exit(EXIT_FAILURE);
-}
-
-static void scheduler_start_task(void)
-{
-	/*
-	 * Set the stack pointer to the top of a new stack so that we don't
-	 * clobber the original stack. Since setjmp and longjmp have to swap
-	 * stack pointers, we won't really need to worry about manipulating the
-	 * stack pointer after this point.
-	 */
-	register void *top = priv.current->stack_top;
-	asm volatile(
-		"mov %[rs], %%rsp \n"
-		: [ rs ] "+r" (top) ::
-	);
-
-	/*
-	 * Run the task function
-	 */
-	priv.current->func(priv.current->arg);
-
-	/*
-	 * The stack pointer should be back where we set it. Returning would be
-	 * a very, very bad idea. Let's instead exit
-	 */
-	scheduler_exit_current_task();
-
-	/* NO RETURN */
-}
 
 void scheduler_run(void)
 {
@@ -197,10 +181,6 @@ void scheduler_run(void)
 		schedule();
 		/* if return, there's nothing else to do and we exit */
 		return;
-	case START_TASK:
-		scheduler_start_task();
-		/* NO RETURN, add break for clarity */
-		break;
 	default:
 		fprintf(stderr, "Uh oh, scheduler error\n");
 		return;
