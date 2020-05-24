@@ -1,4 +1,4 @@
-project('list-example', 'c')
+project('userspace-cooperative-multitasking', 'c')
 
 sources = [
   'main.c',
