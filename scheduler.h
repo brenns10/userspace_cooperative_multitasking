@@ -17,8 +17,7 @@ void scheduler_create_task(void (*func)(void*), void *arg);
 void scheduler_run(void);
 
 /**
- * Exit the current task. If there is no current task, well, we exit the process
- * with an angry message.
+ * Exit the current task.
  */
 void scheduler_exit_current_task(void);
 
