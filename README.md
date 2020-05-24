@@ -22,6 +22,9 @@ void scheduler_relinquish(void);
 You can find the implementation of this API in `scheduler.c` and an example of
 using it in `main.c`.
 
+This project involves platform-specific `x86_64` assembly and thus only runs on
+these platforms. It is, however, quite easy to port to other architectures.
+
 ## Compile and run
 
 This project uses the Meson build system. Install `meson` and `ninja` packages
